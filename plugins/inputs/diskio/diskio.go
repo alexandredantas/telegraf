@@ -10,6 +10,7 @@ import (
 	"github.com/influxdata/telegraf/filter"
 	"github.com/influxdata/telegraf/plugins/inputs"
 	"github.com/influxdata/telegraf/plugins/inputs/system"
+	"github.com/shirou/gopsutil/disk"
 )
 
 var (
@@ -23,6 +24,9 @@ type DiskIO struct {
 	DeviceTags       []string
 	NameTemplates    []string
 	SkipSerialNumber bool
+
+	MountPoints []string
+	IgnoreFS    []string `toml:"ignore_fs"`
 
 	infoCache    map[string]diskInfoCache
 	deviceFilter filter.Filter
@@ -97,6 +101,19 @@ func (s *DiskIO) Gather(acc telegraf.Accumulator) error {
 		devices = s.Devices
 	}
 
+	_, partitions, err := s.ps.DiskUsage(s.MountPoints, s.IgnoreFS)
+
+	if err != nil {
+		return fmt.Errorf("error getting disk usage info: %s", err)
+	}
+
+	partitionsByName := map[string]*disk.PartitionStat{}
+
+	for _, partition := range partitions {
+		partitionName := strings.Replace(partition.Device, "/dev/", "", -1)
+		partitionsByName[partitionName] = partition
+	}
+
 	diskio, err := s.ps.DiskIO(devices)
 	if err != nil {
 		return fmt.Errorf("error getting disk io info: %s", err)
@@ -104,6 +121,10 @@ func (s *DiskIO) Gather(acc telegraf.Accumulator) error {
 
 	for _, io := range diskio {
 		if s.deviceFilter != nil && !s.deviceFilter.Match(io.Name) {
+			continue
+		}
+
+		if partitionsByName[io.Name] == nil {
 			continue
 		}
 
